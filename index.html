@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fantasy Draft Lab</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310231f'/%3E%3Cpath d='M18 43c15-1 25-11 28-25 1 16-8 27-24 30-3-1-4-2-4-5Z' fill='%231f7a4d'/%3E%3Cpath d='M20 43c12-2 21-11 24-23' fill='none' stroke='%23b7f34b' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M28 35l8 7M32 30l8 7' stroke='%23f6f4eb' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=48" />
+    <link rel="stylesheet" href="./styles.css?v=49" />
   </head>
   <body>
     <main class="app">
@@ -291,6 +291,9 @@
             <label>Simulations
               <input id="bulkCountInput" type="number" min="1" max="100" value="50" />
             </label>
+            <label>Draft for team
+              <select id="bulkTeamSelect"></select>
+            </label>
             <label>Mode
               <select id="bulkModeSelect">
                 <option value="compare">Compare all strategies</option>
@@ -440,6 +443,7 @@
       </section>
     </main>
 
-    <script src="./app.js?v=48"></script>
+    <script src="./app.js?v=49"></script>
+    <script src="./bulk-enhancements.js?v=1"></script>
   </body>
 </html>
