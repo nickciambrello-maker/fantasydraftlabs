@@ -25,6 +25,10 @@
       button.dataset.panelTab = "keepers";
       button.type = "button";
       button.textContent = "Keepers";
+      button.addEventListener("click", () => {
+        state.activePanel = "keepers";
+        renderWorkspacePanels();
+      });
       const setupTab = tabs.querySelector("[data-panel-tab='setup']");
       tabs.insertBefore(button, setupTab || tabs.children[2] || null);
     }
