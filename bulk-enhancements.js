@@ -2,6 +2,7 @@
   if (!window.document || typeof state === "undefined") return;
 
   state.bulk.team = Math.max(1, Math.min(LEAGUE.teams, Number(state.bulk.team) || state.userTeam || 1));
+  state.keeperValueTeam = state.keeperValueTeam || "all";
 
   const originalBulkPersonaMix = bulkPersonaMix;
 
@@ -16,6 +17,209 @@
   function personaNameForTeam(team) {
     return getPersonaForTeam(team)?.name || "Balanced drafter";
   }
+
+  function installKeeperToolUi() {
+    const tabs = document.querySelector(".workspace-tabs");
+    if (tabs && !$("[data-panel-tab='keepers']")) {
+      const button = document.createElement("button");
+      button.dataset.panelTab = "keepers";
+      button.type = "button";
+      button.textContent = "Keepers";
+      const setupTab = tabs.querySelector("[data-panel-tab='setup']");
+      tabs.insertBefore(button, setupTab || tabs.children[2] || null);
+    }
+
+    const workspace = document.querySelector(".workspace");
+    if (workspace && !$("[data-panel='keepers']")) {
+      const panel = document.createElement("section");
+      panel.className = "keeper-value-panel workspace-panel";
+      panel.dataset.panel = "keepers";
+      panel.setAttribute("aria-labelledby", "keeper-value-heading");
+      panel.hidden = true;
+      panel.innerHTML = `
+        <div class="panel-heading ownership-heading">
+          <div>
+            <p class="eyebrow">Keeper value</p>
+            <h2 id="keeper-value-heading">Keeper Rankings</h2>
+          </div>
+          <label class="keeper-focus-select">
+            Team
+            <select id="keeperValueTeamSelect"></select>
+          </label>
+        </div>
+        <p class="helper">Ranks Sleeper-imported keeper candidates by current ADP discount, projected impact when a projection upload is available, and the actual pick each team would lose in that keeper round.</p>
+        <div id="keeperValueResults" class="keeper-value-results"></div>
+      `;
+      const orderPanel = $("[data-panel='setup']");
+      workspace.insertBefore(panel, orderPanel || workspace.querySelector("[data-panel='trade']"));
+    }
+  }
+
+  function originalSlotIndexForRound(team, round) {
+    return Number(round) % 2 === 1 ? team - 1 : LEAGUE.teams - team;
+  }
+
+  function keeperCostPickForTeam(team, round) {
+    const roundIndex = Number(round) - 1;
+    const order = state.roundOrders[roundIndex] || [];
+    const ownedIndexes = order
+      .map((owner, index) => owner === team ? index : null)
+      .filter((index) => index !== null);
+    if (!ownedIndexes.length) return null;
+    const originalIndex = originalSlotIndexForRound(team, round);
+    const closestIndex = ownedIndexes.sort((a, b) => Math.abs(a - originalIndex) - Math.abs(b - originalIndex) || a - b)[0];
+    return {
+      pick: roundIndex * LEAGUE.teams + closestIndex + 1,
+      round: Number(round),
+      index: closestIndex,
+      label: `${Number(round)}.${String(closestIndex + 1).padStart(2, "0")}`,
+      originalLabel: `${Number(round)}.${String(originalIndex + 1).padStart(2, "0")}`,
+      pickCountInRound: ownedIndexes.length,
+    };
+  }
+
+  function projectedSeasonTotalForPlayer(player) {
+    const rows = (state.importedRankingRows || [])
+      .filter((row) => row.id === player.id && Number.isFinite(Number(row.projection)))
+      .map((row) => Number(row.projection));
+    if (!rows.length) return null;
+    return median(rows);
+  }
+
+  function keeperCandidateRowsForTeam(team) {
+    const importedTeam = state.sleeper.importData?.teams?.[team - 1];
+    if (!importedTeam?.keeperCandidates?.length) return [];
+    return importedTeam.keeperCandidates
+      .map((candidate) => {
+        const player = playerById(candidate.playerId);
+        if (!player || !candidate.round) return null;
+        const cost = keeperCostPickForTeam(team, candidate.round);
+        const adpPick = Number.isFinite(player.adp) ? player.adp : player.consensusRank || player.rank || null;
+        const marketRound = adpPick ? Math.max(1, adpPick / LEAGUE.teams) : null;
+        const valuePicks = cost && adpPick ? cost.pick - adpPick : -999;
+        const projectionTotal = projectedSeasonTotalForPlayer(player);
+        const projectedAvg = Number.isFinite(projectionTotal) ? projectionTotal / 16 : null;
+        const adpImpact = adpPick ? Math.max(0, (LEAGUE.teams * LEAGUE.rounds - adpPick) / 10) : 0;
+        const projectionImpact = Number.isFinite(projectedAvg) ? projectedAvg * 2.8 : 0;
+        const scarcity = player.position === "RB" ? 5 : player.position === "WR" ? 4 : player.position === "TE" ? 3 : player.position === "QB" ? 2 : 0;
+        const score = cost
+          ? (Math.max(-24, valuePicks) * 1.35) + adpImpact + projectionImpact + scarcity
+          : -999;
+        return {
+          team,
+          player,
+          round: Number(candidate.round),
+          cost,
+          adpPick,
+          marketRound,
+          valuePicks,
+          projectionTotal,
+          projectedAvg,
+          score,
+          status: cost ? "Eligible" : "No owned pick in round",
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+  }
+
+  function formatKeeperAdp(candidate) {
+    if (!candidate.adpPick) return "N/A";
+    return `Pick ${candidate.adpPick.toFixed(1)} / R${candidate.marketRound.toFixed(1)}`;
+  }
+
+  function formatKeeperProjection(candidate) {
+    if (!Number.isFinite(candidate.projectedAvg)) return "N/A";
+    return `${candidate.projectedAvg.toFixed(1)} avg`;
+  }
+
+  function keeperValueSummary(candidate) {
+    if (!candidate.cost) return "Cannot keep without a pick in that round.";
+    const valueText = candidate.valuePicks >= 0
+      ? `${candidate.valuePicks.toFixed(1)} picks cheaper than ADP`
+      : `${Math.abs(candidate.valuePicks).toFixed(1)} picks above ADP`;
+    const multiPickText = candidate.cost.pickCountInRound > 1
+      ? ` Multiple owned picks in Round ${candidate.round}; using ${candidate.cost.label}, closest to original slot ${candidate.cost.originalLabel}.`
+      : "";
+    return `${valueText}.${multiPickText}`;
+  }
+
+  function renderKeeperCandidateCard(candidate, rank) {
+    const isSelected = state.keeperSelections[candidate.team - 1]?.playerId === candidate.player.id;
+    return `
+      <article class="keeper-candidate-card ${rank === 0 ? "leader" : ""} ${isSelected ? "selected" : ""}">
+        <div>
+          <strong>${rank + 1}. ${escapeHtml(candidate.player.name)}</strong>
+          <span>${candidate.player.position} ${candidate.player.team} - ${escapeHtml(candidate.status)}</span>
+        </div>
+        <div><b>Keep cost</b><span>${candidate.cost ? candidate.cost.label : `Round ${candidate.round}`}</span></div>
+        <div><b>ADP</b><span>${formatKeeperAdp(candidate)}</span></div>
+        <div><b>Proj avg</b><span>${formatKeeperProjection(candidate)}</span></div>
+        <div><b>Value</b><span>${candidate.cost ? candidate.valuePicks.toFixed(1) : "N/A"}</span></div>
+        <p>${escapeHtml(keeperValueSummary(candidate))}</p>
+        <button data-apply-keeper="${candidate.team}:${candidate.player.id}:${candidate.round}" type="button" ${candidate.cost ? "" : "disabled"}>
+          ${isSelected ? "Selected keeper" : "Use as keeper"}
+        </button>
+      </article>
+    `;
+  }
+
+  function renderKeeperValueTool() {
+    installKeeperToolUi();
+    if (!$("keeperValueResults")) return;
+    const selectedValue = state.keeperValueTeam || "all";
+    const selectedTeam = Math.max(1, Math.min(LEAGUE.teams, Number(selectedValue) || state.userTeam || 1));
+    $("keeperValueTeamSelect").innerHTML = `<option value="all" ${selectedValue === "all" ? "selected" : ""}>All teams</option>${Array.from({ length: LEAGUE.teams }, (_, index) => {
+      const team = index + 1;
+      return `<option value="${team}" ${selectedValue !== "all" && team === selectedTeam ? "selected" : ""}>${escapeHtml(teamName(team))}</option>`;
+    }).join("")}`;
+    $("keeperValueTeamSelect").value = selectedValue === "all" ? "all" : String(selectedTeam);
+
+    if (!state.sleeper.importData) {
+      $("keeperValueResults").innerHTML = `
+        <div class="keeper-empty">
+          <h3>Import a Sleeper league to rank keeper options.</h3>
+          <p>The tool needs last year's draft round and rostered players from Sleeper. Projection averages will appear only after you upload a rankings/projections file with a <code>projection</code> or <code>points</code> column.</p>
+        </div>
+      `;
+      return;
+    }
+
+    const teams = selectedValue === "all"
+      ? Array.from({ length: LEAGUE.teams }, (_, index) => index + 1)
+      : [selectedTeam];
+    const hasProjectionUploads = (state.importedRankingRows || []).some((row) => Number.isFinite(Number(row.projection)));
+    const teamCards = teams.map((team) => {
+      const rows = keeperCandidateRowsForTeam(team).slice(0, 5);
+      return `
+        <section class="keeper-team-card">
+          <div class="keeper-team-head">
+            <div>
+              <p class="eyebrow">${escapeHtml(teamName(team))}</p>
+              <h3>Top Keeper Options</h3>
+            </div>
+            <span>${escapeHtml(teamKeeperLabel(team))}</span>
+          </div>
+          ${rows.length ? rows.map(renderKeeperCandidateCard).join("") : `<p class="empty">No ranked Sleeper keeper candidates matched the current player database for this team.</p>`}
+        </section>
+      `;
+    }).join("");
+
+    $("keeperValueResults").innerHTML = `
+      <div class="keeper-method-note">
+        <strong>Recommended home:</strong> this belongs in its own Keepers tab, between League and Pick Order, because it uses league import data and directly affects draft setup.
+        ${hasProjectionUploads ? "" : "<span> Projection averages are hidden until a projection/points upload is available; the ranking is currently driven by ADP discount and player market impact.</span>"}
+      </div>
+      <div class="keeper-team-grid">${teamCards}</div>
+    `;
+  }
+
+  const originalRender = render;
+  render = function enhancedRender() {
+    originalRender();
+    renderKeeperValueTool();
+    renderWorkspacePanels();
+  };
 
   function teamKeeperLabel(team) {
     const selection = state.keeperSelections[team - 1];
@@ -196,6 +400,7 @@
     const bestBuild = summary.bestBuild;
     const runnerUp = summary.strategies[1];
     const topRecommendedRound = summary.commonRecommendations.find((round) => round.players.length)?.players[0];
+    const targetPersona = personaNameForTeam(targetTeam);
     const pressureTeams = summary.otherTeams.slice(0, 4).map((team) => `${team.name} (${team.persona})`).join(", ");
     const keeperText = teamKeeperLabel(targetTeam);
     const strategyGap = runnerUp ? bestStrategy.avgScore - runnerUp.avgScore : 0;
@@ -448,6 +653,68 @@
 
   const style = document.createElement("style");
   style.textContent = `
+    .keeper-value-panel {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), transparent), var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+    .keeper-focus-select { min-width: 220px; }
+    .keeper-value-results { display: grid; gap: 14px; margin-top: 14px; }
+    .keeper-method-note,
+    .keeper-empty,
+    .keeper-team-card {
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .keeper-method-note { color: var(--muted); font-size: 0.86rem; line-height: 1.45; }
+    .keeper-method-note span { display: block; margin-top: 6px; }
+    .keeper-team-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(300px, 1fr)); }
+    .keeper-team-card { display: grid; gap: 10px; }
+    .keeper-team-head {
+      align-items: center;
+      border-bottom: 1px solid var(--chalk-line);
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr auto;
+      padding-bottom: 10px;
+    }
+    .keeper-team-head h3 { margin: 0; }
+    .keeper-team-head span { color: var(--muted); font-size: 0.8rem; font-weight: 800; }
+    .keeper-candidate-card {
+      align-items: center;
+      background: rgba(19, 37, 31, 0.035);
+      border: 1px solid var(--chalk-line);
+      border-radius: 8px;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: minmax(180px, 1fr) repeat(4, minmax(82px, auto)) auto;
+      padding: 10px;
+    }
+    .keeper-candidate-card.leader {
+      background: rgba(183, 243, 75, 0.16);
+      border-color: var(--highlight);
+    }
+    .keeper-candidate-card.selected {
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+    .keeper-candidate-card div { display: grid; gap: 2px; }
+    .keeper-candidate-card b,
+    .keeper-candidate-card span {
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    .keeper-candidate-card strong { font-size: 0.92rem; }
+    .keeper-candidate-card p {
+      color: var(--muted);
+      font-size: 0.78rem;
+      grid-column: 1 / -1;
+      margin: 0;
+    }
+    .keeper-candidate-card button { padding: 8px 10px; white-space: nowrap; }
     .bulk-controls { grid-template-columns: repeat(5, minmax(140px, 1fr)); }
     .bulk-ai-summary ul { margin: 0; padding-left: 18px; }
     .bulk-ai-summary li { margin: 0 0 8px; }
@@ -467,6 +734,9 @@
     }
     @media (max-width: 1100px) {
       .bulk-controls { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+      .keeper-team-grid { grid-template-columns: 1fr; }
+      .keeper-candidate-card { grid-template-columns: 1fr 1fr; }
+      .keeper-candidate-card button { justify-self: start; }
     }
   `;
   document.head.appendChild(style);
@@ -481,6 +751,11 @@
   }
 
   document.addEventListener("change", (event) => {
+    if (event.target.id === "keeperValueTeamSelect") {
+      state.keeperValueTeam = event.target.value;
+      renderKeeperValueTool();
+      return;
+    }
     if (event.target.id !== "bulkTeamSelect") return;
     state.bulk.team = Number(event.target.value);
     state.bulk.results = null;
@@ -488,5 +763,18 @@
     renderBulkSimulator();
   });
 
+  document.addEventListener("click", (event) => {
+    const applyValue = event.target.closest("[data-apply-keeper]")?.dataset.applyKeeper;
+    if (!applyValue) return;
+    const [teamRaw, playerId, roundRaw] = applyValue.split(":");
+    const team = Number(teamRaw);
+    state.keeperSelections[team - 1] = { playerId, round: Number(roundRaw) };
+    saveKeeperSelections();
+    refreshKeeperPicksInCurrentDraft();
+    render();
+  });
+
+  installKeeperToolUi();
   if (typeof renderBulkSimulator === "function") renderBulkSimulator();
+  renderKeeperValueTool();
 })();
