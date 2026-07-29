@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "checks": [
+    "full application loads without console or page errors",
+    "Sleeper Board, profile detail and Rankings filter/sort expose required fields",
+    "all loaded players receive complete finite profiles even without advanced metrics",
+    "get_sleeper_targets is strict, deterministic and read-only while existing tools and local fallback continue working",
+    "late ADP alone does not qualify and missing data lowers confidence",
+    "existing minimal CSV format still imports and receives a non-crashing profile",
+    "advanced optional columns, provenance and dated ADP snapshots import safely with escaped text",
+    "existing ranking localStorage loads safely and is preserved",
+    "user picks retain immutable draft-time Sleeper Score snapshots for grading and calibration",
+    "bulk simulator preserves complete drafts and finalizes the Draft Plan in browser-yielding stages",
+    "390px mobile layout has no document-level horizontal overflow"
+  ],
+  "checkCount": 11
+}
