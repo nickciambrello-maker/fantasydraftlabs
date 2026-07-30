@@ -1,0 +1,22 @@
+{
+  "name": "fantasy-draft-labs",
+  "version": "1.5.3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "check": "node --check app.js && node --check sleeper-model.js && node --check sleeper-lab.js && node --check simulation-worker.js && node --check data/historical-adp-data.js && node --check api/draft-assistant.js && node tests/validate.mjs",
+    "test:browser": "python tests/browser_harness.py",
+    "test:sim-memory": "python tests/simulator_memory_harness.py",
+    "test:sim-fallback": "python tests/simulator_fallback_harness.py",
+    "test:draft-room": "python tests/draft_room_recovery_harness.py",
+    "test:draft-progressive": "python tests/draft_room_progressive_harness.py",
+    "test:draft-stable": "python tests/draft_room_stable_first_harness.py"
+  },
+  "dependencies": {
+    "openai": "latest"
+  },
+  "devDependencies": {
+    "vercel": "latest"
+  }
+}
