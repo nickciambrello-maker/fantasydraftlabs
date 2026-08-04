@@ -1,0 +1,17 @@
+{
+  "name": "fantasy-draft-labs",
+  "version": "1.7.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "check": "node --check app.js && node --check league-intelligence.js && node --check sleeper-model.js && node --check sleeper-lab.js && node --check data/historical-adp-data.js && node --check api/draft-assistant.js",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "openai": "latest"
+  },
+  "devDependencies": {
+    "vercel": "latest"
+  }
+}
